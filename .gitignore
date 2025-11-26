@@ -8,7 +8,6 @@
 
 # File di IntellIJ
 .idea/
-*.iml
 
 # Cartelle Data Lake (NON vanno sul Git!)
 /data/
