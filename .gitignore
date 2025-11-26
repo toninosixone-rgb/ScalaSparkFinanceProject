@@ -1,0 +1,19 @@
+# File di Build SBT
+/target/
+/project/target/
+*.class
+*.jar
+*.war
+*.zip
+
+# File di IntellIJ
+.idea/
+*.iml
+
+# Cartelle Data Lake (NON vanno sul Git!)
+/data/
+
+# Cartelle SBT/Spark temporanee
+.bsp/
+.sbt/
+logs/
