@@ -3,7 +3,8 @@ package it.data.manager.processor
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.types._
 import it.data.manager.config.SparkConfig
-import org.apache.spark.sql.functions.{col, lit, to_date} // Importa la classe di configurazione
+import it.data.manager.utils.{MetricCalculator, Visualizer}
+import org.apache.spark.sql.functions.{col, input_file_name, lit, regexp_extract, to_date, upper} // Importa la classe di configurazione
 
 object BatchProcessor {
 
@@ -21,14 +22,23 @@ object BatchProcessor {
   /**
    * Legge il file CSV/txt
    */
-  def readCsv(spark: SparkSession, filePath: String, tickerName: String): DataFrame = {
-    spark.read
+  def readCsv(spark: SparkSession, filePath: String): DataFrame = {
+    val read = spark.read
       .schema(STOCK_SCHEMA)      // Usa lo schema definito
       .option("header", "true")
       .option("sep", ",")
       .csv(filePath)
-      // INIEZIONE DEL TICKER: Aggiunge la colonna Ticker con un valore fisso (metadato)
-      .withColumn("Ticker", lit(tickerName))
+      // 1. Aggiunge il percorso completo del file
+      .withColumn("input_file", input_file_name())
+      // 2. Estrae il nome (assume formato "nome.us.txt").
+      // La regex prende tutto ciò che non è uno slash ([^/]+) prima di ".us.txt"
+      .withColumn("Ticker", regexp_extract(col("input_file"), "([^/]+)\\.us\\.txt$", 1))
+
+    read
+      // 3. Converte in maiuscolo (es. "zion" -> "ZION")
+      .withColumn("Ticker", upper(col("Ticker")))
+      // 4. Rimuove la colonna temporanea col percorso intero
+      .drop("input_file")
   }
 
   //ETL
@@ -63,7 +73,7 @@ object BatchProcessor {
     config.configureLogging(spark)
 
     // 3. Esegue la lettura del CSV
-    val rawDf = readCsv(spark, "data/raw/Stocks/zion.us.txt", "ZION")
+    val rawDf = readCsv(spark, "data/raw/Stocks/zion.us.txt")
 
     // --- Inizio Logica di Trasformazione (Fase 1) ---
 
@@ -72,8 +82,19 @@ object BatchProcessor {
 
     // QUI AGGIUNGERAI LA LOGICA DI PULIZIA, ARRICCHIMENTO (EMA), E SCRITTURA IN DELTA LAKE
     val transformDf = transformAndLoad(spark, rawDf)
-    println("--- Trasformazione dei Dati Storici ---")
-    transformDf.show(5)
+
+
+    // B. Calcolo delle metriche (SMA/EMA) -> Questo genera il vero "finalData"
+    // Usiamo il MetricCalculator per aggiungere le colonne SMA_50 e SMA_200
+    val dataWithSma50 = MetricCalculator.calculateEma(transformDf, 50, "Close")
+    val finalData = MetricCalculator.calculateEma(dataWithSma50, 200, "Close")
+
+    println("--- Anteprima Dati Finali con Medie Mobili ---")
+    finalData.show(5)
+
+    // C. Visualizzazione
+    // Ora passiamo il finalData al Visualizer per aprire la finestra su Google/Browser
+    Visualizer.generateStockChart(finalData, "ZION")
 
     // --- Fine Logica di Trasformazione ---
 

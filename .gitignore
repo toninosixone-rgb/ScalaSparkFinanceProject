@@ -8,6 +8,7 @@
 
 # File di IntellIJ
 .idea/
+.idea/workspace.xml
 
 # Cartelle Data Lake (NON vanno sul Git!)
 /data/
