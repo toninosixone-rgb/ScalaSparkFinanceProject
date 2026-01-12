@@ -19,27 +19,21 @@ object BatchProcessor {
     StructField("OpenInt", LongType, nullable = true)
   ))
 
+  // Percorso Silver aggiornato (Path assoluto Windows)
+  val SILVER_PATH = "file:///C:/Users/ANTO/Documents/progetti/ScalaSparkFinanceProject/data/silver"
+
   /**
    * Legge il file CSV/txt
    */
-  def readCsv(spark: SparkSession, filePath: String): DataFrame = {
-    val read = spark.read
-      .schema(STOCK_SCHEMA)      // Usa lo schema definito
+  def readCsv(spark: SparkSession, filePath: String, tickerName: String): DataFrame = {
+    spark.read
+      .schema(STOCK_SCHEMA)
       .option("header", "true")
       .option("sep", ",")
       .csv(filePath)
-      // 1. Aggiunge il percorso completo del file
-      .withColumn("input_file", input_file_name())
-      // 2. Estrae il nome (assume formato "nome.us.txt").
-      // La regex prende tutto ciò che non è uno slash ([^/]+) prima di ".us.txt"
-      .withColumn("Ticker", regexp_extract(col("input_file"), "([^/]+)\\.us\\.txt$", 1))
-
-    read
-      // 3. Converte in maiuscolo (es. "zion" -> "ZION")
-      .withColumn("Ticker", upper(col("Ticker")))
-      // 4. Rimuove la colonna temporanea col percorso intero
-      .drop("input_file")
+      .withColumn("Ticker", lit(tickerName))
   }
+
 
   //ETL
   def transformAndLoad(spark: SparkSession, rawDf: DataFrame): DataFrame = {
@@ -72,32 +66,48 @@ object BatchProcessor {
     // 2. Configura il logging e il cleanup
     config.configureLogging(spark)
 
-    // 3. Esegue la lettura del CSV
-    val rawDf = readCsv(spark, "data/raw/Stocks/zion.us.txt")
+    val inputFile = "data/raw/Stocks/zion.us.txt"
+    val tickerName = "ZION"
 
-    // --- Inizio Logica di Trasformazione (Fase 1) ---
+    try {
+      // 1. Lettura dati raw
+      val rawDf = readCsv(spark, inputFile, tickerName)
+      println("--- Anteprima dei Dati Raw ---")
+      rawDf.show(5)
 
-    println("--- Anteprima dei Dati Storici ---")
-    rawDf.show(5)
+      // 2. Pulizia (Fase Silver iniziale)
+      val cleanDf = transformAndLoad(spark, rawDf)
 
-    // QUI AGGIUNGERAI LA LOGICA DI PULIZIA, ARRICCHIMENTO (EMA), E SCRITTURA IN DELTA LAKE
-    val transformDf = transformAndLoad(spark, rawDf)
+      // 3. Arricchimento (Calcolo Medie Mobili)
+      // Qui creiamo il vero dato "Silver" arricchito
+      println("INFO: Calcolo delle medie mobili in corso...")
+      val dataWithSma50 = MetricCalculator.calculateEma(cleanDf, 50, "Close")
+      val finalData = MetricCalculator.calculateEma(dataWithSma50, 200, "Close")
 
+      println("--- Anteprima Dati Finali (Silver) ---")
+      finalData.show(5)
 
-    // B. Calcolo delle metriche (SMA/EMA) -> Questo genera il vero "finalData"
-    // Usiamo il MetricCalculator per aggiungere le colonne SMA_50 e SMA_200
-    val dataWithSma50 = MetricCalculator.calculateEma(transformDf, 50, "Close")
-    val finalData = MetricCalculator.calculateEma(dataWithSma50, 200, "Close")
+      // 4. Scrittura nel Layer Silver (Delta Lake)
+      // Ora scriviamo il dato finale nel percorso specificato
+      println(s"INFO: Scrittura dati in corso nel path: $SILVER_PATH")
+      finalData.write
+        .format("delta")
+        .mode("overwrite")
+        .partitionBy("Ticker")
+        .save(SILVER_PATH)
 
-    println("--- Anteprima Dati Finali con Medie Mobili ---")
-    finalData.show(5)
+      println("SUCCESS: Dati salvati correttamente nel layer Silver.")
 
-    // C. Visualizzazione
-    // Ora passiamo il finalData al Visualizer per aprire la finestra su Google/Browser
-    Visualizer.generateStockChart(finalData, "ZION")
+      // 5. Visualizzazione
+      Visualizer.generateStockChart(finalData, tickerName)
 
-    // --- Fine Logica di Trasformazione ---
-
-    spark.stop()
+    } catch {
+      case e: Exception =>
+        println(s"ERROR: Errore durante il processamento: ${e.getMessage}")
+        e.printStackTrace()
+    } finally {
+      spark.stop()
+      println("INFO: Spark Session chiusa.")
+    }
   }
 }
