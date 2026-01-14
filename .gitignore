@@ -7,8 +7,8 @@
 *.zip
 
 # File di IntellIJ
-.idea/
-.idea/workspace.xml
+*.idea/
+
 
 # Cartelle Data Lake (NON vanno sul Git!)
 /data/
